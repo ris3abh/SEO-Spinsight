@@ -131,6 +131,11 @@ export default function Home() {
     }
   };
 
+  // Calculate baseline sessions for display
+  const baselineSessions = historicalData && historicalData.length > 0
+    ? historicalData[historicalData.length - 1].sessions
+    : undefined;
+
   const handleExportCSV = () => {
     if (!forecasts) return;
 
@@ -324,6 +329,7 @@ export default function Home() {
             <ForecastResults
               forecasts={forecasts}
               includeRevenue={!!revenuePerConversion && parseFloat(revenuePerConversion) > 0}
+              baselineSessions={baselineSessions}
             />
           </div>
         )}

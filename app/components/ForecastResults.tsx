@@ -5,11 +5,13 @@ import { ForecastResult } from '@/lib/forecasting';
 interface ForecastResultsProps {
   forecasts: ForecastResult[];
   includeRevenue: boolean;
+  baselineSessions?: number;
 }
 
 export default function ForecastResults({
   forecasts,
   includeRevenue,
+  baselineSessions,
 }: ForecastResultsProps) {
   const totalExpectedSessions = forecasts.reduce(
     (sum, f) => sum + f.expectedSessions,
@@ -23,8 +25,55 @@ export default function ForecastResults({
     ? forecasts.reduce((sum, f) => sum + (f.expectedRevenue || 0), 0)
     : 0;
 
+  // Calculate growth metrics if baseline is available
+  const month12Sessions = forecasts[forecasts.length - 1]?.expectedSessions || 0;
+  const totalGrowth = baselineSessions ? month12Sessions - baselineSessions : 0;
+  const growthPercentage = baselineSessions && baselineSessions > 0 
+    ? ((month12Sessions / baselineSessions - 1) * 100).toFixed(1)
+    : null;
+
   return (
     <div className="space-y-6">
+      {/* Baseline Information */}
+      {baselineSessions && (
+        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-6">
+          <h3 className="text-lg font-semibold text-blue-900 dark:text-blue-100 mb-4">
+            Baseline & Growth Analysis
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <p className="text-sm font-medium text-blue-800 dark:text-blue-200">
+                Current Baseline
+              </p>
+              <p className="text-2xl font-bold text-blue-900 dark:text-blue-100">
+                {baselineSessions.toLocaleString()} sessions/month
+              </p>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-blue-800 dark:text-blue-200">
+                Projected Month {forecasts.length}
+              </p>
+              <p className="text-2xl font-bold text-blue-900 dark:text-blue-100">
+                {month12Sessions.toLocaleString()} sessions/month
+              </p>
+            </div>
+            <div>
+              <p className="text-sm font-medium text-blue-800 dark:text-blue-200">
+                Total Growth
+              </p>
+              <p className="text-2xl font-bold text-blue-900 dark:text-blue-100">
+                +{totalGrowth.toLocaleString()} sessions
+                {growthPercentage && (
+                  <span className="text-sm text-blue-700 dark:text-blue-300 ml-2">
+                    ({growthPercentage}%)
+                  </span>
+                )}
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg p-4">
           <h3 className="text-sm font-medium text-zinc-600 dark:text-zinc-400">
