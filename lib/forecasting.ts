@@ -94,7 +94,9 @@ function calculatePositionImprovement(
   
   const progress = monthIndex / totalMonths;
   
-  const decayCurve = 1 - Math.exp(-3 * progress);
+  // ENHANCED: Make early-month gains more pronounced with accelerated progress
+  const acceleratedProgress = Math.pow(progress, 0.7); // Power < 1 = faster early gains
+  const decayCurve = 1 - Math.exp(-3 * acceleratedProgress);
   
   const improvement = positionDiff * decayCurve * effortMultiplier;
   
@@ -184,25 +186,52 @@ export function generateForecast(
   const conversionRate = calculateBaselineConversionRate(historicalData);
   const results: ForecastResult[] = [];
   
+  // Calculate baseline from historical data
+  const baselineSessions = historicalData && historicalData.length > 0
+    ? historicalData[historicalData.length - 1].sessions
+    : 0;
+
+  // Track cumulative baseline that grows month-over-month
+  let cumulativeBaseline = baselineSessions;
+
   for (let month = 1; month <= parameters.timelineMonths; month++) {
-    let expectedSessions = 0;
+    let monthlyGrowth = 0;
     
     keywords.forEach((keyword) => {
-      const projectedPosition = calculatePositionImprovement(
-        keyword.currentPosition,
-        keyword.targetPosition,
-        month,
-        parameters.timelineMonths,
+      // Calculate position at THIS month vs PREVIOUS month
+      const currentMonthPosition = calculatePositionImprovement(
+        keyword.currentPosition, 
+        keyword.targetPosition, 
+        month, 
+        parameters.timelineMonths, 
         parameters.effortLevel
       );
       
-      const ctr = getCTR(projectedPosition, keyword.currentCTR);
-      const sessions = keyword.searchVolume * ctr;
-      expectedSessions += sessions;
+      const previousMonthPosition = month === 1 
+        ? keyword.currentPosition 
+        : calculatePositionImprovement(
+            keyword.currentPosition, 
+            keyword.targetPosition, 
+            month - 1,
+            parameters.timelineMonths, 
+            parameters.effortLevel
+          );
+      
+      // Only count NEW gains THIS month
+      const newCTR = getCTR(currentMonthPosition);
+      const prevCTR = getCTR(previousMonthPosition);
+      const monthlyLift = keyword.searchVolume * (newCTR - prevCTR);
+      monthlyGrowth += monthlyLift;
     });
     
-    const conservativeMultiplier = 0.7;
-    const optimisticMultiplier = 1.3;
+    // Add this month's growth to cumulative baseline
+    cumulativeBaseline += monthlyGrowth;
+    const expectedSessions = cumulativeBaseline;
+    
+    // Make intervals wider and vary by timeline for better realism
+    const timelineRisk = Math.min(parameters.timelineMonths / 12, 1.5);
+    const conservativeMultiplier = 0.6 * timelineRisk;  // Gets more conservative for longer timelines
+    const optimisticMultiplier = 1.4 + (timelineRisk * 0.2);  // Gets more optimistic range
     
     const conservativeSessions = expectedSessions * conservativeMultiplier;
     const optimisticSessions = expectedSessions * optimisticMultiplier;
@@ -270,21 +299,34 @@ export function generateMethodologyText(): string {
 
 This forecast uses a statistical model that combines:
 
-1. **Historical Performance Baseline**: Conversion rates are calculated from your historical data to ensure projections reflect your actual website performance.
+1. **Historical Performance Baseline**: The forecast starts from your current traffic baseline derived from historical data, then adds incremental gains from keyword ranking improvements.
 
-2. **Industry-Standard CTR Curves**: Click-through rates by search position are based on aggregated industry data, showing the expected percentage of searchers who click on results at each ranking position.
+2. **Baseline + Growth Model**: 
+   - **Starting Point**: Current monthly sessions from your historical data
+   - **Growth Component**: Incremental traffic from keyword position improvements
+   - **Compounding Effect**: Each month builds upon the previous month's total
 
-3. **Ranking Improvement Modeling**: Position improvements follow a decay curve that models realistic SEO velocity - faster gains in early months, with progress slowing over time as you approach target positions.
+3. **Industry-Standard CTR Curves**: Click-through rates by search position are based on aggregated industry data, showing the expected percentage of searchers who click on results at each ranking position.
 
-4. **Three-Tier Confidence Intervals**:
-   - **Conservative (70th percentile)**: Lower-bound estimate representing cautious outcomes
-   - **Expected (50th percentile)**: Most likely outcome based on typical performance
-   - **Optimistic (30th percentile)**: Upper-bound estimate representing favorable conditions
+4. **Ranking Improvement Modeling**: Position improvements follow an accelerated decay curve that models realistic SEO velocity - faster gains in early months, with progress slowing over time as you approach target positions.
 
-5. **Effort Level Adjustments**: Resource allocation impacts the speed of ranking improvements, with higher effort levels accelerating the timeline.
+5. **Incremental Traffic Calculation**: For each month, we calculate:
+   - New position for each keyword at that month
+   - CTR lift compared to the previous month's position
+   - Additional traffic = Search Volume × (New CTR - Previous CTR)
+   - Total Sessions = Baseline + Sum of all incremental gains
+
+6. **Three-Tier Confidence Intervals**:
+   - **Conservative (60-70% range)**: Lower-bound estimate representing cautious outcomes
+   - **Expected (50th percentile)**: Most likely outcome based on typical performance  
+   - **Optimistic (130-160% range)**: Upper-bound estimate representing favorable conditions
+   - Range widens for longer timelines to reflect increased uncertainty
+
+7. **Effort Level Adjustments**: Resource allocation impacts the speed of ranking improvements, with higher effort levels accelerating the timeline.
 
 **Key Assumptions**:
 - CTR rates follow established industry patterns unless custom data is provided
+- Historical traffic baseline represents current organic search performance
 - Conversion rates remain consistent with historical performance
 - SEO work is implemented consistently throughout the project timeline
 - No major algorithm updates or competitive disruptions occur
@@ -292,7 +334,7 @@ This forecast uses a statistical model that combines:
 
 **Calculation Formula**:
 \`\`\`
-Projected Sessions = Σ (Search Volume × CTR at Projected Position)
+Month N Sessions = Baseline Sessions + Σ(Keyword Search Volume × (CTR at Month N Position - CTR at Month N-1 Position))
 Projected Conversions = Projected Sessions × Historical Conversion Rate
 Revenue = Projected Conversions × Average Revenue per Conversion
 \`\`\`
