@@ -1,15 +1,17 @@
 'use client';
 
-import { ForecastResult } from '@/lib/forecasting';
+import { ForecastResult, KeywordImpact } from '@/lib/forecasting';
 
 interface ForecastResultsProps {
   forecasts: ForecastResult[];
+  keywordImpact: KeywordImpact[];
   includeRevenue: boolean;
   baselineSessions?: number;
 }
 
 export default function ForecastResults({
   forecasts,
+  keywordImpact,
   includeRevenue,
   baselineSessions,
 }: ForecastResultsProps) {
@@ -187,6 +189,66 @@ export default function ForecastResults({
           </table>
         </div>
       </div>
+
+      {keywordImpact.length > 0 && (
+        <div className="mt-8">
+          <h3 className="text-xl font-semibold text-zinc-900 dark:text-zinc-50 mb-4">
+            Keyword Impact Analysis
+          </h3>
+          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-zinc-200 dark:divide-zinc-800">
+                <thead className="bg-zinc-50 dark:bg-zinc-800">
+                  <tr>
+                    <th className="px-4 py-3 text-left text-xs font-medium text-zinc-700 dark:text-zinc-300 uppercase tracking-wider">
+                      Keyword
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-zinc-700 dark:text-zinc-300 uppercase tracking-wider">
+                      Current Pos
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-zinc-700 dark:text-zinc-300 uppercase tracking-wider">
+                      Forecast Pos
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-zinc-700 dark:text-zinc-300 uppercase tracking-wider">
+                      Search Volume
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-zinc-700 dark:text-zinc-300 uppercase tracking-wider">
+                      Est. Monthly Lift
+                    </th>
+                    <th className="px-4 py-3 text-right text-xs font-medium text-zinc-700 dark:text-zinc-300 uppercase tracking-wider">
+                      % Contribution
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="bg-white dark:bg-zinc-900 divide-y divide-zinc-200 dark:divide-zinc-800">
+                  {keywordImpact.map((impact) => (
+                    <tr key={impact.keyword}>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                        {impact.keyword}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-zinc-700 dark:text-zinc-300">
+                        {impact.currentPosition}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-zinc-900 dark:text-zinc-100">
+                        {impact.forecastPosition}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-zinc-700 dark:text-zinc-300">
+                        {impact.searchVolume.toLocaleString()}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-green-600 dark:text-green-400">
+                        +{impact.estimatedMonthlySessions.toLocaleString()}
+                      </td>
+                      <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-zinc-700 dark:text-zinc-300">
+                        {impact.contributionPercentage.toFixed(1)}%
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

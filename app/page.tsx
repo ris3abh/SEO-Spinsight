@@ -8,6 +8,7 @@ import {
   HistoricalData,
   ProjectParameters,
   ForecastResult,
+  KeywordImpact,
   generateForecast,
   generateCaveats,
   generateMethodologyText,
@@ -28,6 +29,8 @@ export default function Home() {
   const [effortLevel, setEffortLevel] = useState<'low' | 'medium' | 'high'>('medium');
   const [revenuePerConversion, setRevenuePerConversion] = useState<string>('');
   const [forecasts, setForecasts] = useState<ForecastResult[] | null>(null);
+  const [keywordImpact, setKeywordImpact] = useState<KeywordImpact[] | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [errors, setErrors] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [parseErrors, setParseErrors] = useState<string[]>([]);
@@ -104,28 +107,35 @@ export default function Home() {
 
   const handleGenerateForecast = () => {
     setErrors([]);
+    setWarnings([]);
     setForecasts(null);
+    setKeywordImpact(null);
 
     const parameters: ProjectParameters = {
       timelineMonths,
       effortLevel,
     };
 
-    const validation = validateInputData(keywordData, historicalData, parameters);
+    const validation = validateInputData(keywordData, historicalData, parameters, revenuePerConversion ? parseFloat(revenuePerConversion) : undefined);
 
     if (!validation.valid) {
       setErrors(validation.errors);
       return;
     }
 
-    if (validation.errors.length > 0) {
-      setErrors(validation.errors);
+    if (validation.warnings.length > 0) {
+      setWarnings(validation.warnings);
     }
 
     try {
       const revenue = revenuePerConversion ? parseFloat(revenuePerConversion) : undefined;
-      const results = generateForecast(keywordData, historicalData, parameters, revenue);
-      setForecasts(results);
+      const { monthlyResults, keywordImpact: impact, warnings: forecastWarnings } = generateForecast(keywordData, historicalData, parameters, revenue);
+      
+      setForecasts(monthlyResults);
+      setKeywordImpact(impact);
+      if (forecastWarnings.length > 0) {
+        setWarnings(prev => Array.from(new Set([...prev, ...forecastWarnings])));
+      }
     } catch (error) {
       setErrors([`Failed to generate forecast: ${error}`]);
     }
@@ -152,7 +162,7 @@ export default function Home() {
     const caveats = generateCaveats(keywordData, parameters);
     const methodology = generateMethodologyText();
 
-    const excel = generateExcel(forecasts, includeRevenue, methodology, caveats);
+    const excel = generateExcel(forecasts, includeRevenue, methodology, caveats, keywordImpact || []);
     downloadFile(
       excel,
       'seo-forecast.xlsx',
@@ -222,10 +232,15 @@ export default function Home() {
                     bg-white dark:bg-zinc-800 text-zinc-900 dark:text-zinc-100
                     focus:ring-2 focus:ring-blue-500 dark:focus:ring-blue-600 focus:border-transparent"
                 >
-                  <option value="low">Low</option>
-                  <option value="medium">Medium</option>
-                  <option value="high">High</option>
+                  <option value="low">Low (On-page only)</option>
+                  <option value="medium">Medium (Standard Campaign)</option>
+                  <option value="high">High (Aggressive Strategy)</option>
                 </select>
+                <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                  {effortLevel === 'low' && 'Basic optimization, 0.6x growth speed.'}
+                  {effortLevel === 'medium' && 'Content + link building, standard growth.'}
+                  {effortLevel === 'high' && 'Aggressive content & PR, 1.4x growth speed.'}
+                </p>
               </div>
 
               <div>
@@ -271,6 +286,19 @@ export default function Home() {
                 <ul className="list-disc list-inside text-sm text-yellow-800 dark:text-yellow-200 space-y-1">
                   {parseErrors.map((error, index) => (
                     <li key={index}>{error}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {warnings.length > 0 && (
+              <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md p-4">
+                <h3 className="text-sm font-medium text-yellow-900 dark:text-yellow-100 mb-2">
+                  Forecast Warnings & Logic Flags:
+                </h3>
+                <ul className="list-disc list-inside text-sm text-yellow-800 dark:text-yellow-200 space-y-1">
+                  {warnings.map((warning, index) => (
+                    <li key={index}>{warning}</li>
                   ))}
                 </ul>
               </div>
@@ -328,6 +356,7 @@ export default function Home() {
 
             <ForecastResults
               forecasts={forecasts}
+              keywordImpact={keywordImpact || []}
               includeRevenue={!!revenuePerConversion && parseFloat(revenuePerConversion) > 0}
               baselineSessions={baselineSessions}
             />

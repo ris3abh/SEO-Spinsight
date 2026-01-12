@@ -1,5 +1,5 @@
 import * as XLSX from 'xlsx';
-import { ForecastResult } from './forecasting';
+import { ForecastResult, KeywordImpact } from './forecasting';
 
 export function generateCSV(forecasts: ForecastResult[], includeRevenue: boolean): string {
   const headers = [
@@ -50,7 +50,8 @@ export function generateExcel(
   forecasts: ForecastResult[],
   includeRevenue: boolean,
   methodology: string,
-  caveats: string[]
+  caveats: string[],
+  keywordImpact?: KeywordImpact[]
 ): ArrayBuffer {
   const wb = XLSX.utils.book_new();
   
@@ -92,7 +93,28 @@ export function generateExcel(
   
   ws['!cols'] = colWidths;
   
-  XLSX.utils.book_append_sheet(wb, ws, 'Forecast');
+  XLSX.utils.book_append_sheet(wb, ws, 'Monthly Forecast');
+
+  if (keywordImpact && keywordImpact.length > 0) {
+    const impactData = keywordImpact.map(ki => ({
+      'Keyword': ki.keyword,
+      'Current Position': ki.currentPosition,
+      'Forecast Position': ki.forecastPosition,
+      'Search Volume': ki.searchVolume,
+      'Estimated Monthly Lift': ki.estimatedMonthlySessions,
+      'Contribution %': ki.contributionPercentage.toFixed(2) + '%'
+    }));
+    const wsImpact = XLSX.utils.json_to_sheet(impactData);
+    wsImpact['!cols'] = [
+      { wch: 30 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 15 },
+      { wch: 20 },
+      { wch: 15 }
+    ];
+    XLSX.utils.book_append_sheet(wb, wsImpact, 'Keyword Impact');
+  }
   
   const summaryData = [
     ['SEO FORECAST SUMMARY'],

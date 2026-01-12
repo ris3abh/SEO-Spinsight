@@ -30,6 +30,15 @@ export interface ForecastResult {
   optimisticRevenue?: number;
 }
 
+export interface KeywordImpact {
+  keyword: string;
+  currentPosition: number;
+  forecastPosition: number;
+  searchVolume: number;
+  estimatedMonthlySessions: number;
+  contributionPercentage: number;
+}
+
 const INDUSTRY_CTR_CURVE: Record<number, number> = {
   1: 0.316,
   2: 0.158,
@@ -94,9 +103,10 @@ function calculatePositionImprovement(
   
   const progress = monthIndex / totalMonths;
   
-  // ENHANCED: Make early-month gains more pronounced with accelerated progress
-  const acceleratedProgress = Math.pow(progress, 0.7); // Power < 1 = faster early gains
-  const decayCurve = 1 - Math.exp(-3 * acceleratedProgress);
+  // SLOWER: Progress is now more gradual over 8-10 months
+  // Use a power > 1 to slow down early gains, and a smaller decay constant
+  const gradualProgress = Math.pow(progress, 1.2); 
+  const decayCurve = 1 - Math.exp(-2.5 * gradualProgress);
   
   const improvement = positionDiff * decayCurve * effortMultiplier;
   
@@ -128,9 +138,11 @@ function calculateBaselineConversionRate(historicalData: HistoricalData[]): numb
 export function validateInputData(
   keywords: KeywordData[],
   historicalData: HistoricalData[],
-  parameters: ProjectParameters
-): { valid: boolean; errors: string[] } {
+  parameters: ProjectParameters,
+  revenuePerConversion?: number
+): { valid: boolean; errors: string[]; warnings: string[] } {
   const errors: string[] = [];
+  const warnings: string[] = [];
   
   if (!keywords || keywords.length === 0) {
     errors.push('No keyword data provided');
@@ -148,14 +160,24 @@ export function validateInputData(
       if (kw.searchVolume < 0) {
         errors.push(`Invalid search volume for keyword "${kw.keyword}": must be positive`);
       }
-      if (kw.currentCTR !== undefined && (kw.currentCTR < 0 || kw.currentCTR > 1)) {
-        errors.push(`Invalid CTR for keyword "${kw.keyword}": must be between 0-1`);
+      
+      // Target Validation: Flag overly ambitious targets
+      const positionJump = kw.currentPosition - kw.targetPosition;
+      if (positionJump > 40 && parameters.timelineMonths <= 6) {
+        warnings.push(`Target position for "${kw.keyword}" is very ambitious for a ${parameters.timelineMonths}-month timeline.`);
+      }
+      if (kw.targetPosition < 3 && positionJump > 20) {
+        warnings.push(`Ranking in the top 3 for "${kw.keyword}" is extremely difficult and may take longer than projected.`);
       }
     });
   }
   
   if (!historicalData || historicalData.length === 0) {
-    errors.push('No historical data provided - using default conversion rate of 2%');
+    warnings.push('No historical data provided - using default conversion rate of 2%');
+  }
+  
+  if (revenuePerConversion !== undefined && revenuePerConversion > 0 && revenuePerConversion < 1) {
+    warnings.push(`Low revenue per conversion (${revenuePerConversion}) detected. Please verify if this includes Lifetime Value (LTV).`);
   }
   
   if (!parameters.timelineMonths || parameters.timelineMonths < 1) {
@@ -167,9 +189,16 @@ export function validateInputData(
   }
   
   return {
-    valid: errors.length === 0 || (errors.length === 1 && errors[0].includes('No historical data')),
-    errors
+    valid: errors.length === 0,
+    errors,
+    warnings
   };
+}
+
+export interface ForecastOutput {
+  monthlyResults: ForecastResult[];
+  keywordImpact: KeywordImpact[];
+  warnings: string[];
 }
 
 export function generateForecast(
@@ -177,14 +206,14 @@ export function generateForecast(
   historicalData: HistoricalData[],
   parameters: ProjectParameters,
   revenuePerConversion?: number
-): ForecastResult[] {
-  const validation = validateInputData(keywords, historicalData, parameters);
+): ForecastOutput {
+  const validation = validateInputData(keywords, historicalData, parameters, revenuePerConversion);
   if (!validation.valid) {
     throw new Error(`Validation failed: ${validation.errors.join(', ')}`);
   }
   
   const conversionRate = calculateBaselineConversionRate(historicalData);
-  const results: ForecastResult[] = [];
+  const monthlyResults: ForecastResult[] = [];
   
   // Calculate baseline from historical data
   const baselineSessions = historicalData && historicalData.length > 0
@@ -193,10 +222,17 @@ export function generateForecast(
 
   // Track cumulative baseline that grows month-over-month
   let cumulativeBaseline = baselineSessions;
+  
+  // Track individual keyword lifts for impact report
+  const keywordLifts = new Map<string, number>();
 
   for (let month = 1; month <= parameters.timelineMonths; month++) {
     let monthlyGrowth = 0;
     
+    // Use a natural-looking oscillation ±5% for monthly variance
+    // We use a deterministic variance based on month and a seed-like approach
+    const monthlyVariance = 1 + (Math.sin(month * 1.5) * 0.05); 
+
     keywords.forEach((keyword) => {
       // Calculate position at THIS month vs PREVIOUS month
       const currentMonthPosition = calculatePositionImprovement(
@@ -222,19 +258,26 @@ export function generateForecast(
       const prevCTR = getCTR(previousMonthPosition);
       const monthlyLift = keyword.searchVolume * (newCTR - prevCTR);
       monthlyGrowth += monthlyLift;
+      
+      // Add to total lift for this keyword
+      const currentTotalLift = keywordLifts.get(keyword.keyword) || 0;
+      keywordLifts.set(keyword.keyword, currentTotalLift + monthlyLift);
     });
     
     // Add this month's growth to cumulative baseline
     cumulativeBaseline += monthlyGrowth;
-    const expectedSessions = cumulativeBaseline;
+    const expectedSessions = cumulativeBaseline * monthlyVariance;
     
-    // Make intervals wider and vary by timeline for better realism
-    const timelineRisk = Math.min(parameters.timelineMonths / 12, 1.5);
-    const conservativeMultiplier = 0.6 * timelineRisk;  // Gets more conservative for longer timelines
-    const optimisticMultiplier = 1.4 + (timelineRisk * 0.2);  // Gets more optimistic range
+    const incrementalSessions = Math.max(0, expectedSessions - (baselineSessions * monthlyVariance));
     
-    const conservativeSessions = expectedSessions * conservativeMultiplier;
-    const optimisticSessions = expectedSessions * optimisticMultiplier;
+    // Confidence intervals now only vary the INCREMENTAL gains
+    // and widen over time for realism
+    const timelineRisk = Math.min(month / 12, 1.5);
+    const conservativeGrowthFactor = Math.max(0.2, 0.5 - (timelineRisk * 0.1));
+    const optimisticGrowthFactor = 1.5 + (timelineRisk * 0.3);
+    
+    const conservativeSessions = (baselineSessions * monthlyVariance) + (incrementalSessions * conservativeGrowthFactor);
+    const optimisticSessions = (baselineSessions * monthlyVariance) + (incrementalSessions * optimisticGrowthFactor);
     
     const result: ForecastResult = {
       month,
@@ -252,10 +295,36 @@ export function generateForecast(
       result.optimisticRevenue = Math.round(result.optimisticConversions * revenuePerConversion);
     }
     
-    results.push(result);
+    monthlyResults.push(result);
   }
   
-  return results;
+  // Calculate keyword impact report
+  const totalLift = Array.from(keywordLifts.values()).reduce((sum, lift) => sum + lift, 0);
+  const keywordImpact: KeywordImpact[] = keywords.map(kw => {
+    const lift = keywordLifts.get(kw.keyword) || 0;
+    const forecastPosition = calculatePositionImprovement(
+      kw.currentPosition,
+      kw.targetPosition,
+      parameters.timelineMonths,
+      parameters.timelineMonths,
+      parameters.effortLevel
+    );
+    
+    return {
+      keyword: kw.keyword,
+      currentPosition: kw.currentPosition,
+      forecastPosition,
+      searchVolume: kw.searchVolume,
+      estimatedMonthlySessions: Math.round(lift),
+      contributionPercentage: totalLift > 0 ? (lift / totalLift) * 100 : 0
+    };
+  }).sort((a, b) => b.estimatedMonthlySessions - a.estimatedMonthlySessions);
+  
+  return {
+    monthlyResults,
+    keywordImpact,
+    warnings: validation.warnings
+  };
 }
 
 export function generateCaveats(
@@ -308,7 +377,7 @@ This forecast uses a statistical model that combines:
 
 3. **Industry-Standard CTR Curves**: Click-through rates by search position are based on aggregated industry data, showing the expected percentage of searchers who click on results at each ranking position.
 
-4. **Ranking Improvement Modeling**: Position improvements follow an accelerated decay curve that models realistic SEO velocity - faster gains in early months, with progress slowing over time as you approach target positions.
+4. **Ranking Improvement Modeling**: Position improvements follow a gradual decay curve that models realistic SEO velocity - progress is spread across 8-10 months, avoiding unrealistic early spikes.
 
 5. **Incremental Traffic Calculation**: For each month, we calculate:
    - New position for each keyword at that month
@@ -317,19 +386,23 @@ This forecast uses a statistical model that combines:
    - Total Sessions = Baseline + Sum of all incremental gains
 
 6. **Three-Tier Confidence Intervals**:
-   - **Conservative (60-70% range)**: Lower-bound estimate representing cautious outcomes
-   - **Expected (50th percentile)**: Most likely outcome based on typical performance  
-   - **Optimistic (130-160% range)**: Upper-bound estimate representing favorable conditions
-   - Range widens for longer timelines to reflect increased uncertainty
+   - **Conservative**: Lower-bound estimate where only ~40% of projected growth is realized. Ensures forecasts don't drop below baseline.
+   - **Expected**: Most likely outcome based on typical performance  
+   - **Optimistic**: Upper-bound estimate representing favorable conditions (up to 160%+ growth).
+   - Variance is applied only to the incremental gains, protecting the known baseline.
 
-7. **Effort Level Adjustments**: Resource allocation impacts the speed of ranking improvements, with higher effort levels accelerating the timeline.
+7. **Monthly Variance**: Real-world traffic fluctuates monthly. The model incorporates a ±5% natural oscillation to provide a more realistic projection than static plateaus.
+
+8. **Effort Level Adjustments**: Resource allocation impacts the speed of improvements:
+   - **Low**: Basic on-page & technical fixes (0.6x speed)
+   - **Medium**: Standard campaign with content & links (1.0x speed)
+   - **High**: Aggressive strategy with high-scale content & PR (1.4x speed)
 
 **Key Assumptions**:
 - CTR rates follow established industry patterns unless custom data is provided
 - Historical traffic baseline represents current organic search performance
 - Conversion rates remain consistent with historical performance
 - SEO work is implemented consistently throughout the project timeline
-- No major algorithm updates or competitive disruptions occur
 - Technical and content recommendations are executed as planned
 
 **Calculation Formula**:
